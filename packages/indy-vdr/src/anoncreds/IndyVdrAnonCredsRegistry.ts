@@ -19,6 +19,7 @@ import type {
   RegisterCredentialDefinitionReturnStateWait,
   RegisterCredentialDefinitionReturnStateFinished,
   RegisterCredentialDefinitionReturnStateFailed,
+  RegisterRevocationRegistryDefinitionOptions,
 } from '@aries-framework/anoncreds'
 import type { AgentContext } from '@aries-framework/core'
 import type { SchemaResponse } from '@hyperledger/indy-vdr-shared'
@@ -42,6 +43,7 @@ import {
   GetRevocationRegistryDeltaRequest,
   GetRevocationRegistryDefinitionRequest,
   CustomRequest,
+  RevocationRegistryDefinitionRequest,
 } from '@hyperledger/indy-vdr-shared'
 
 import { verificationKeyForIndyDid } from '../dids/didIndyUtil'
@@ -52,6 +54,7 @@ import {
   indyVdrAnonCredsRegistryIdentifierRegex,
   getDidIndySchemaId,
   getDidIndyCredentialDefinitionId,
+  getDidIndyRevocationRegistryId,
 } from './utils/identifiers'
 import { anonCredsRevocationStatusListFromIndyVdr } from './utils/transform'
 
@@ -512,6 +515,7 @@ export class IndyVdrAnonCredsRegistry implements AnonCredsRegistry {
         value: {
           maxCredNum: response.result.data.value.maxCredNum,
           tailsHash: response.result.data.value.tailsHash,
+          issuanceType: response.result.data.value.issuanceType,
           tailsLocation: response.result.data.value.tailsLocation,
           publicKeys: {
             accumKey: {
@@ -552,8 +556,105 @@ export class IndyVdrAnonCredsRegistry implements AnonCredsRegistry {
     }
   }
 
-  public async registerRevocationRegistryDefinition(): Promise<RegisterRevocationRegistryDefinitionReturn> {
-    throw new AriesFrameworkError('Not implemented!')
+  public async registerRevocationRegistryDefinition(
+    agentContext: AgentContext,
+    options: RegisterRevocationRegistryDefinitionOptions
+  ): Promise<RegisterRevocationRegistryDefinitionReturn> {
+    try {
+      // This will throw an error if trying to register a revocation registry definition with a legacy indy identifier. We only support did:indy
+      // identifiers for registering, that will allow us to extract the namespace and means all stored records will use did:indy identifiers.
+      const { namespaceIdentifier, namespace } = parseIndyDid(options.revocationRegistryDefinition.issuerId)
+
+      const indyVdrPoolService = agentContext.dependencyManager.resolve(IndyVdrPoolService)
+
+      const pool = indyVdrPoolService.getPoolForNamespace(namespace)
+      agentContext.config.logger.debug(
+        `Registering revocation registry definition on ledger '${pool.indyNamespace}' with did '${options.revocationRegistryDefinition.issuerId}'`,
+        options.revocationRegistryDefinition
+      )
+
+      // TODO: this will bypass caching if done on a higher level.
+      const { credentialDefinition, resolutionMetadata } =
+        await this.getCredentialDefinition(agentContext, options.revocationRegistryDefinition.credDefId)
+
+      if (
+        !credentialDefinition
+      ) {
+        return {
+          registrationMetadata: {},
+          revocationRegistryDefinitionMetadata: {
+            didIndyNamespace: pool.indyNamespace,
+          },
+          revocationRegistryDefinitionState: {
+            revocationRegistryDefinition: options.revocationRegistryDefinition,
+            state: 'failed',
+            reason: `error resolving credential definition with id ${options.revocationRegistryDefinition.credDefId}: ${resolutionMetadata.error} ${resolutionMetadata.message}`,
+          },
+        }
+      }
+      const credentialDefinitionId = options.revocationRegistryDefinition.credDefId
+      const {schemaSeqNo} = parseIndyCredentialDefinitionId(credentialDefinitionId)
+
+      const didIndyRevocationRegistryDefinitionId = getDidIndyRevocationRegistryId(
+        namespace,
+        namespaceIdentifier,
+        schemaSeqNo,
+        credentialDefinition.tag,
+        options.revocationRegistryDefinition.tag
+      )
+      const legacyCredentialDefinitionId = getUnqualifiedCredentialDefinitionId(namespaceIdentifier, schemaSeqNo, credentialDefinition.tag)
+      const revocationRegistryDefinitionRequest = new RevocationRegistryDefinitionRequest({
+        submitterDid: namespaceIdentifier,
+        revocationRegistryDefinitionV1: {
+          ver: '1.0',
+          id: didIndyRevocationRegistryDefinitionId,
+          credDefId: legacyCredentialDefinitionId,
+          revocDefType: 'CL_ACCUM',
+          tag: options.revocationRegistryDefinition.tag,
+          value: options.revocationRegistryDefinition.value,
+        },
+      })
+
+      const submitterKey = await verificationKeyForIndyDid(agentContext, options.revocationRegistryDefinition.issuerId)
+      const writeRequest = await pool.prepareWriteRequest(agentContext, revocationRegistryDefinitionRequest, submitterKey)
+      const response = await pool.submitRequest(writeRequest);
+      agentContext.config.logger.debug(
+        `Registered revocation registry definition '${didIndyRevocationRegistryDefinitionId}' on ledger '${pool.indyNamespace}'`,
+        {
+          response,
+          credentialDefinition: options.revocationRegistryDefinition,
+        }
+      )
+
+      return {
+        revocationRegistryDefinitionMetadata: {},
+        revocationRegistryDefinitionState: {
+          revocationRegistryDefinition: options.revocationRegistryDefinition,
+          revocationRegistryDefinitionId: didIndyRevocationRegistryDefinitionId,
+          state: 'finished',
+        },
+        registrationMetadata: {},
+      }
+    } catch (error) {
+      agentContext.config.logger.error(
+        `Error registering credential definition for credential definition '${options.revocationRegistryDefinition.credDefId}'`,
+        {
+          error,
+          did: options.revocationRegistryDefinition.issuerId,
+          credentialDefinition: options.revocationRegistryDefinition,
+        }
+      )
+
+      return {
+        revocationRegistryDefinitionMetadata: {},
+        registrationMetadata: {},
+        revocationRegistryDefinitionState: {
+          revocationRegistryDefinition: options.revocationRegistryDefinition,
+          state: 'failed',
+          reason: `unknownError: ${error.message}`,
+        },
+      }
+    }
   }
 
   public async getRevocationStatusList(

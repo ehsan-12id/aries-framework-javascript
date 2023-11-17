@@ -26,3 +26,8 @@ export interface AnonCredsUpdateRevocationStatusListOptions {
   issuedCredentialIndexes?: number[]
   revocationRegistryDefinitionId: string
 }
+
+export interface AnonCredsRevokeCredentialOptions {
+  revocationRegistryDefinitionId: string
+  revokedCredentialIndexes: number[]
+}

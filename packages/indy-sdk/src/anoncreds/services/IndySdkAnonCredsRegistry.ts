@@ -441,6 +441,7 @@ export class IndySdkAnonCredsRegistry implements AnonCredsRegistry {
             publicKeys: revocationRegistryDefinition.value.publicKeys,
             tailsHash: revocationRegistryDefinition.value.tailsHash,
             tailsLocation: revocationRegistryDefinition.value.tailsLocation,
+            issuanceType: revocationRegistryDefinition.value.issuanceType
           },
           tag: revocationRegistryDefinition.tag,
           revocDefType: 'CL_ACCUM',
