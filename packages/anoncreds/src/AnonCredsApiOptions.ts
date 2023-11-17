@@ -14,6 +14,7 @@ export interface AnonCredsRegisterRevocationRegistryDefinitionOptions {
   tag: string
   credentialDefinitionId: string
   maximumCredentialNumber: number
+  issuanceType: 'ISSUANCE_BY_DEFAULT' | 'ISSUANCE_ON_DEMAND'
 }
 
 export interface AnonCredsRegisterRevocationStatusListOptions {

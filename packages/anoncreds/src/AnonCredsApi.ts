@@ -359,7 +359,7 @@ export class AnonCredsApi {
     revocationRegistryDefinition: AnonCredsRegisterRevocationRegistryDefinitionOptions
     options: Extensible
   }): Promise<RegisterRevocationRegistryDefinitionReturn> {
-    const { issuerId, tag, credentialDefinitionId, maximumCredentialNumber } = options.revocationRegistryDefinition
+    const { issuerId, tag, credentialDefinitionId, maximumCredentialNumber, issuanceType } = options.revocationRegistryDefinition
 
     const tailsFileService = this.agentContext.dependencyManager.resolve(AnonCredsModuleConfig).tailsFileService
 
@@ -403,7 +403,7 @@ export class AnonCredsApi {
       revocationRegistryDefinition.value.tailsLocation = await tailsFileService.uploadTailsFile(this.agentContext, {
         revocationRegistryDefinition,
       })
-
+      revocationRegistryDefinition.value.issuanceType = issuanceType;
       const result = await registry.registerRevocationRegistryDefinition(this.agentContext, {
         revocationRegistryDefinition,
         options: {},
