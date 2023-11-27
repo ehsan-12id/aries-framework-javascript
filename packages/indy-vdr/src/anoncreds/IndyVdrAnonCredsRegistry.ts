@@ -20,6 +20,7 @@ import type {
   RegisterCredentialDefinitionReturnStateFinished,
   RegisterCredentialDefinitionReturnStateFailed,
   RegisterRevocationRegistryDefinitionOptions,
+  RegisterRevocationStatusListOptions,
 } from '@aries-framework/anoncreds'
 import type { AgentContext } from '@aries-framework/core'
 import type { SchemaResponse } from '@hyperledger/indy-vdr-shared'
@@ -44,6 +45,7 @@ import {
   GetRevocationRegistryDefinitionRequest,
   CustomRequest,
   RevocationRegistryDefinitionRequest,
+  RevocationRegistryEntryRequest,
 } from '@hyperledger/indy-vdr-shared'
 
 import { verificationKeyForIndyDid } from '../dids/didIndyUtil'
@@ -761,9 +763,68 @@ export class IndyVdrAnonCredsRegistry implements AnonCredsRegistry {
     }
   }
 
-  public async registerRevocationStatusList(): Promise<RegisterRevocationStatusListReturn> {
-    throw new AriesFrameworkError('Not implemented!')
+  public async registerRevocationStatusList(
+    agentContext: AgentContext,
+    options: RegisterRevocationStatusListOptions
+  ): Promise<RegisterRevocationStatusListReturn> {
+
+    const indySdkPoolService = agentContext.dependencyManager.resolve(IndyVdrPoolService)
+    const { namespaceIdentifier } = parseIndyDid(options.revocationStatusList.issuerId)
+    
+    const { did, schemaSeqNo, credentialDefinitionTag, revocationRegistryTag } =
+      parseIndyRevocationRegistryId(options.revocationStatusList.revRegDefId)
+    const { pool } = await indySdkPoolService.getPoolForDid(agentContext, did)
+
+    const legacyRevocationRegistryId = getUnqualifiedRevocationRegistryId(namespaceIdentifier, schemaSeqNo, credentialDefinitionTag, revocationRegistryTag)
+    const timestamp = Date.now()
+    const revocationStatusList: GetRevocationStatusListReturn = await this.getRevocationStatusList(agentContext, options.revocationStatusList.revRegDefId, timestamp)
+
+    const revocationEntryRequest = new RevocationRegistryEntryRequest({
+      revocationRegistryDefinitionId: legacyRevocationRegistryId,
+      revocationRegistryDefinitionType: 'CL_ACCUM',
+      revocationRegistryEntry: {
+        ver: '1.0',
+        value: {
+          accum: options.revocationStatusList.currentAccumulator,
+          prevAccum:revocationStatusList.revocationStatusList?.currentAccumulator,
+          issued:[],
+          revoked:options.revocationStatusList.revocationList
+        } as any,
+      },
+      submitterDid: namespaceIdentifier,
+    })
+
+    const submitterKey = await verificationKeyForIndyDid(agentContext, options.revocationStatusList.issuerId)
+    const revocationEntryWriteRequest = await pool.prepareWriteRequest(
+      agentContext,
+      revocationEntryRequest,
+      submitterKey
+    )
+
+    const response = await pool.submitRequest(revocationEntryWriteRequest);
+      agentContext.config.logger.debug(
+        `Registered status list revocation registry definition '${response}' on ledger '${pool.indyNamespace}'`,
+        {
+          response,
+          credentialDefinition: options.revocationStatusList,
+        }
+      )
+
+      return {
+        revocationStatusListState: {
+          revocationStatusList: {
+            ...options.revocationStatusList,
+            timestamp
+          },
+          state: 'finished',
+          timestamp: `${timestamp}`
+        },
+        revocationStatusListMetadata: {},
+        registrationMetadata: {}
+      }
+
   }
+
 
   private async fetchIndySchemaWithSeqNo(agentContext: AgentContext, seqNo: number, did: string) {
     const indyVdrPoolService = agentContext.dependencyManager.resolve(IndyVdrPoolService)
